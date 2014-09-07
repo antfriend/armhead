@@ -12,13 +12,16 @@ CON
 
   RAND_MIN = -2147483648
   RAND_MAX = 2147483647
+
+  MOV_SPEED_MAX = 200
+  MOV_SPEED_MIN = 5
  
 VAR
   long x_pos
   long y_pos
   long z_pos
 
-  long mov_speed '~10 to about 100, higher values up to at least 500 are ok but pretty slow
+  long mov_speed '~10 to about 100, higher values up to at least (don't know the upper limit) 500  are very, very slow
 
   long ran
     
@@ -32,15 +35,81 @@ PUB init
   'mov_speed := 200  'exceedingly slow
   servo.start(1500,21,1000,22,2000,23,0,24)
   ran := cnt ' initialize ran from the clock
+
+PUB go_faster_until_fastest
+  if(mov_speed > MOV_SPEED_MIN)
+    mov_speed := mov_speed - 1
+  else
+    mov_speed := MOV_SPEED_MIN
     
-PUB speed(the_speed)
-  mov_speed := the_speed
-    
+PUB go_slower_until_slowest
+  if(mov_speed < MOV_SPEED_MAX)
+    mov_speed := mov_speed + 1
+  else
+    mov_speed := MOV_SPEED_MAX
+       
 PUB back_off
   if(z_pos < 100)
     z_pos := z_pos + 5
         drift_upward(50)
-    slew_to(0,y_pos,z_pos,1)
+    'slew_to(0,y_pos,z_pos,1)
+
+PUB drift_downward(how_much) 
+  tilt_head(y_pos + how_much,1)
+  'slew
+  
+PUB drift_upward(how_much)'drift_downward
+  tilt_head(y_pos - how_much,1)
+  'slew 
+
+PUB drift_leftward(how_much) 
+  turn_base(x_pos + how_much,1)
+  'slew
+  
+PUB drift_rightward(how_much)
+  turn_base(x_pos - how_much,1)
+ 
+PRI slew_to(x,y,z,in_this_many_steps)
+{  x,y,z values can be -100 to 100 where zero means "don't change" and
+   point 1,1,1 is the center of a conceptual cube
+   left-top-forward-most corner is -100,-100,-100
+   right-bottom-back-most corner is 100,100,100
+   center-middle is 1,1,1   
+}
+  'get base (servo 0) servo position value and send it
+  if(x <> 0)
+    x_pos := x
+    if(x_pos > 100)
+      x_pos := 100
+    if(x_pos < -100)
+      x_pos := -100
+    turn_base(map_to_min_mid_max_of_servo(x_pos,SERVO_MIN,SERVO_MID,SERVO_MAX),in_this_many_steps)
+  
+  'get head (servo 2) servo position value and send it
+  if(y <> 0)
+    y_pos := y
+    if(y_pos > 100)
+      y_pos := 100
+    if(y_pos < -100)
+      y_pos := -100    
+    tilt_head(map_to_min_mid_max_of_servo(y_pos,SERVO_MIN,SERVO_MID,SERVO_MAX),in_this_many_steps)
+  
+  'get neck (servo 1) servo position value and send it
+  if(z <> 0)
+    z_pos := z
+    if(z_pos > 100)
+      z_pos := 100
+    if(z_pos < -100)
+      z_pos := -100
+    lean_neck(map_to_min_mid_max_of_servo(z_pos,SERVO_MIN,SERVO_MID,SERVO_MAX),in_this_many_steps)
+
+  'figure out which one to wait for
+  if(x <> 0)
+    wait_for_base
+  if(y <> 0)
+    wait_for_head
+  if(z <> 0)
+    wait_for_neck
 
 PUB get_closer
   if(z_pos > -100)
@@ -48,10 +117,29 @@ PUB get_closer
     drift_downward(50)
     slew_to(0,0,z_pos,1)
 
+PUB slew
+  slew_to(x_pos,y_pos,z_pos,mov_speed)
+  wait_for_all
+      
+PUB speed(the_speed)
+  if(mov_speed < MOV_SPEED_MIN)
+    mov_speed := MOV_SPEED_MIN
+  elseif(mov_speed > MOV_SPEED_MAX)
+    mov_speed := MOV_SPEED_MAX
+  else  
+    mov_speed := the_speed
+
 PUB move_to(x_val,y_val,z_val)
   slew_to(x_val,y_val,z_val,mov_speed)
 
-
+      
+PUB home_position
+    turn_base(SERVO_MID,mov_speed)
+    tilt_head(SERVO_MAX,mov_speed)
+    lean_neck(SERVO_MIN,mov_speed)
+    'slew
+    wait_for_all
+    
 PRI turn_base(pos, cycles) 
   if(pos > SERVO_MAX)
     x_pos := SERVO_MAX
@@ -59,9 +147,17 @@ PRI turn_base(pos, cycles)
     x_pos := SERVO_MIN
   else   
     x_pos := pos
+  mov_speed := cycles  
   servo.move_to(0,x_pos,cycles)  
 
 PRI lean_neck(pos, cycles)
+  if(pos > SERVO_MAX)
+    z_pos := SERVO_MAX
+  elseif(pos < SERVO_MIN)
+    z_pos := SERVO_MIN
+  else   
+    z_pos := pos
+  mov_speed := cycles 
   servo.move_to(1,pos,cycles)  
 
 PRI tilt_head(pos, cycles)
@@ -71,6 +167,7 @@ PRI tilt_head(pos, cycles)
     y_pos := SERVO_MIN
   else   
     y_pos := pos
+  mov_speed := cycles
   servo.move_to(2,y_pos,cycles)  
 
 PRI wait_for_all
@@ -91,47 +188,34 @@ PRI relax
     servo.move_to(0,0,1)
     servo.move_to(1,0,1)
     servo.move_to(2,0,1)
-    wait_for_head
-    'wait_for_neck
-    'wait_for_base
-      
-PUB home_position
-    turn_base(1500,mov_speed)
-    servo.move_to(1,1000,mov_speed)
-    tilt_head(SERVO_MAX,mov_speed)
-    wait_for_base  
-    wait_for_neck
-    wait_for_head
-    
+    wait_for_all
 PRI home_stop
-      home_position
-      home_position
-      home_position
       home_position
       relax
       
 PRI look_up
-    servo.move_to(1,1000,mov_speed)
+    lean_neck(1000,mov_speed)
     tilt_head(SERVO_MIN,mov_speed)
-    wait_for_head
+    'wait_for_head
 
 PRI look_down
     tilt_head(SERVO_MAX,mov_speed)
-    servo.move_to(1,2000,mov_speed)
-    wait_for_head
+    lean_neck(2000,mov_speed)
+    'wait_for_head
 
 PRI look_left
     turn_base(SERVO_MAX,mov_speed)
-    wait_for_base
+    'wait_for_base
     
 PRI look_right
     turn_base(SERVO_MIN,mov_speed)
-    wait_for_base
+    'wait_for_base
     
 PRI go_in_for_closer_inspection
     tilt_head(SERVO_MIN,mov_speed)
-    servo.move_to(1,2000,mov_speed)
-    wait_for_head
+    lean_neck(2000,mov_speed)
+    'servo.move_to(1,2000,mov_speed)
+    'wait_for_head
                          
 PRI random_number | r          '
   'between -100 and 100
@@ -173,52 +257,8 @@ PRI map_to_min_mid_max_of_servo(pos, mini, mid, maxi) | increment
     increment := (mid - mini)/100
     return mid + (pos * increment)'ex: 1500 + (-600)    
   else
-    return 0 
- 
-PRI slew_to(x,y,z,in_this_many_steps)
-{  x,y,z values can be -100 to 100 where zero means "don't change" and
-   point 1,1,1 is the center of a conceptual cube
-   left-top-forward-most corner is -100,-100,-100
-   right-bottom-back-most corner is 100,100,100
-   center-middle is 1,1,1   
-}
-  'get base (servo 0) servo position value and send it
-  if(x <> 0)
-    x_pos := x
-    if(x_pos > 100)
-      x_pos := 100
-    if(x_pos < -100)
-      x_pos := -100
-    turn_base(map_to_min_mid_max_of_servo(x_pos,SERVO_MIN,SERVO_MID,SERVO_MAX),in_this_many_steps)
-  
-  'get head (servo 2) servo position value and send it
-  if(y <> 0)
-    y_pos := y
-    if(y_pos > 100)
-      y_pos := 100
-    if(y_pos < -100)
-      y_pos := -100    
-    tilt_head(map_to_min_mid_max_of_servo(y_pos,SERVO_MIN,SERVO_MID,SERVO_MAX),in_this_many_steps)
-  
-  'get neck (servo 1) servo position value and send it
-  if(z <> 0)
-    z_pos := z
-    if(z_pos > 100)
-      z_pos := 100
-    if(z_pos < -100)
-      z_pos := -100
-    lean_neck(map_to_min_mid_max_of_servo(z_pos,SERVO_MIN,SERVO_MID,SERVO_MAX),in_this_many_steps)
-
-  'figure out which one to wait for
-
-  'or just wait for all of them
-  if(x <> 0)
-    wait_for_base
-  if(y <> 0)
-    wait_for_head
-  if(z <> 0)
-    wait_for_neck
-
+    return 0
+    
 PRI slew_to_centroid | val
   {set_eye_values
 
@@ -248,19 +288,4 @@ PRI slew_to_centroid | val
     val := 0
   if(val < 10)
     tilt_head_to_middle      }
-
-PUB drift_downward(how_much) 
-  tilt_head(y_pos + how_much,1)
-  wait_for_head
-  
-PUB drift_upward(how_much)'drift_downward
-  tilt_head(y_pos - how_much,1)
-  wait_for_head 
-
-PUB drift_leftward(how_much) 
-  turn_base(x_pos + how_much,1)
-  wait_for_base
-  
-PUB drift_rightward(how_much)
-  turn_base(x_pos - how_much,1)
-  wait_for_base 
+   
